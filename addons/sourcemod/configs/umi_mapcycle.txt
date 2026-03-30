@@ -1,0 +1,110 @@
+"umi_mapcycle"
+{
+    // ==========================================================
+    // UMI mapcycle template (KeyValues format)
+    //
+    // HOW TO USE:
+    // 1) Keep this exact root key: "umi_mapcycle"
+    // 2) Each first-level section is a "group" (category/mode)
+    // 3) Each map is a subkey under its group
+    // 4) Map entries usually use empty bodies: "map_name" { }
+    // 5) Do not duplicate the same map in multiple groups unless intended
+    //
+    // WORKSHOP MAPS (native support):
+    // - You can use a numeric workshop ID as the entry key.
+    // - You can also set a custom "display" name for voting menus/chat.
+    // - "map" is OPTIONAL.
+    // - Recommended: set "map" to the real internal map name for better
+    //   history matching and fallback behavior if no workshop change command is available.
+    //
+    // Example:
+    // "3234567890"
+    // {
+    //     "display"  "Mirage Night (Workshop)"
+    //     "map"      "de_mirage_night"   // optional (recommended)
+    // }
+    // ==========================================================
+
+    "Competitive"
+    {
+        // Classic bomb/competitive pool examples
+        "de_mirage" {}
+        "de_inferno" {}
+        "de_nuke" {}
+        "de_overpass" {}
+        "de_ancient" {}
+        "de_anubis" {}
+    }
+
+    "Casual"
+    {
+        // Lighter/varied maps for casual sessions
+        "de_dust2" {}
+        "de_vertigo" {}
+        "de_train" {}
+        "de_cache" {}
+    }
+
+    "Aim"
+    {
+        // Aim practice / fast warmup style maps
+        "aim_map" {}
+        "aim_redline" {}
+        "aim_botz" {}
+    }
+
+    "Retake"
+    {
+        // Retake-oriented maps
+        "de_mirage_retake" {}
+        "de_inferno_retake" {}
+        "de_nuke_retake" {}
+    }
+
+    // Example workshop/custom group.
+    // Replace IDs and names with your real workshop maps.
+    "Workshop"
+    {
+        "3234567890"
+        {
+            "display"  "Mirage Night (Workshop)"
+            "map"      "de_mirage_night"
+        }
+
+        "2987654321"
+        {
+            "display"  "Inferno Remix (Workshop)"
+            "map"      "de_inferno_remix"
+        }
+    }
+
+    "TF2 Workshop"
+    {
+        "1234567890"
+        {
+            "display"  "cp_example_workshop_tf2"
+            "map"      "cp_example_workshop_tf2" // optional, recommended
+        }
+
+        "2345678901"
+        {
+            "display"  "koth_example_workshop_tf2"
+            "map"      "koth_example_workshop_tf2" // optional, recommended
+        }
+    }
+
+    "L4D2 Workshop"
+    {
+        "3456789012"
+        {
+            "display"  "c8m1_apartment_custom"
+            "map"      "c8m1_apartment_custom" // optional, recommended
+        }
+
+        "4567890123"
+        {
+            "display"  "custom_campaign_map_01"
+            "map"      "custom_campaign_map_01" // optional, recommended
+        }
+    }
+}

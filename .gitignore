@@ -1,0 +1,6 @@
+release/
+dist/
+*.zip
+*.7z
+Thumbs.db
+Desktop.ini
