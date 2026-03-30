@@ -1,6 +1,22 @@
 # Umbrella Multimod Interface (UMI)
 
+![UMI Cover](assets/images/cover.png)
+
 UMI is a SourceMod plugin that provides a 2-phase multimod voting system with nominations, RTV, tie-break support, admin controls, and native Workshop-aware map entries.
+
+## Screenshots
+
+### Category Vote
+
+![Category Vote](assets/images/vote-phase1-category.png)
+
+### Final Map Vote
+
+![Final Map Vote](assets/images/vote-phase2-map.png)
+
+### Nomination Menu
+
+![Nomination Menu](assets/images/menu-nominate-category.png)
 
 ## Features
 
