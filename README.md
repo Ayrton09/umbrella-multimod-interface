@@ -134,7 +134,3 @@ Notes:
 ## Version
 
 Current release: `1.1.0`
-
-## License
-
-No license file is currently included in this repository.
