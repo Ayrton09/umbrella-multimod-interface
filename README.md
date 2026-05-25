@@ -37,8 +37,7 @@ It is designed to work across SourceMod-supported Source engine games, while som
 
 ## Requirements
 
-- SourceMod 1.10 or newer
-- `sdktools`
+- SourceMod 1.12 stable or newer
 - `multicolors`
 - Optional: `adminmenu`
 
@@ -58,15 +57,24 @@ Notes:
 - `addons/sourcemod/scripting/umbrella_umi.sp`
 - `addons/sourcemod/translations/umi_multimod.phrases.txt`
 - `addons/sourcemod/configs/umi_mapcycle.txt`
+- `sound/admin_plugin/actions/startyourvoting.mp3`
+- `sound/admin_plugin/actions/endofvote.mp3`
 
 ## Installation
 
-1. Copy the `addons` folder into your game server
+1. Copy the `addons` and `sound` folders into your game server
 2. Change map or load the plugin
 
 UMI auto-generates:
 
 - `cfg/sourcemod/umbrella_multimod_interface.cfg`
+
+Default vote sounds:
+
+- Vote start: `admin_plugin/actions/startyourvoting.mp3`
+- Vote end: `admin_plugin/actions/endofvote.mp3`
+
+The release package includes these files under `sound/admin_plugin/actions`.
 
 ## Commands
 
@@ -75,14 +83,16 @@ UMI auto-generates:
 - `!nominate`
 - `!rtv`
 
-### Admin Commands
+### Admin Controls
 
-- `sm_umi_force`
-- `sm_umi_setnext`
-- `sm_umi_cancel`
-- `sm_umi_extend`
-- `sm_umi_abort`
-- `sm_umi_reload`
+UMI adds these actions to the SourceMod admin menu when `adminmenu` is available:
+
+- Force vote
+- Set next map
+- Cancel current vote
+- Extend map
+- Abort scheduled map change
+- Reload mapcycle
 
 ## Mapcycle Format
 
@@ -123,7 +133,7 @@ Notes:
 
 ## Version
 
-Current release: `1.0.0`
+Current release: `1.1.0`
 
 ## License
 

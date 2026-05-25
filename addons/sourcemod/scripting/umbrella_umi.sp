@@ -8,8 +8,15 @@
 #define REQUIRE_PLUGIN
 
 #define PLUGIN_NAME "Umbrella Multimod Interface (UMI)"
-#define PLUGIN_VERSION "1.0.0"
+#define PLUGIN_VERSION "1.1.0"
 #define CHAT_PREFIX "{lightblue}[UMI] {default}"
+#define MIN_MAP_CHANGE_DELAY 3.0
+#define SOUND_START_DEFAULT "admin_plugin/actions/startyourvoting.mp3"
+#define SOUND_WIN_DEFAULT "admin_plugin/actions/endofvote.mp3"
+#define SOUND_START_LEGACY "ui/beep07.wav"
+#define SOUND_WIN_LEGACY "ui/achievement_earned.wav"
+#define UMI_CONFIG_PATH "cfg/sourcemod/umbrella_multimod_interface.cfg"
+#define UMI_CONFIG_TEMP_PATH "cfg/sourcemod/umbrella_multimod_interface.cfg.tmp"
 
 public Plugin myinfo = {
     name = PLUGIN_NAME,
@@ -107,14 +114,87 @@ public void OnPluginStart() {
     g_cvTieBreakSound = CreateConVar("umi_tiebreak_sound", "", "Tie-break start sound path. Leave empty to reuse umi_sound_start.");
     g_cvDebug = CreateConVar("umi_debug", "0", "Verbose debug logs in server console/logs. 0 = disabled, 1 = enabled.", _, true, 0.0, true, 1.0);
     g_cvStrictMapValidation = CreateConVar("umi_strict_map_validation", "0", "Strict map validation for mapcycle and nominations. 0 = soft (allow even if IsMapValid fails), 1 = strict.", _, true, 0.0, true, 1.0);
-    g_cvSoundStart = CreateConVar("umi_sound_start", "ui/beep07.wav", "Sound path played when votes start (phase 1, phase 2, or fallback tie-break).");
-    g_cvSoundWin = CreateConVar("umi_sound_win", "ui/achievement_earned.wav", "Sound path played when a map winner is decided.");
+    g_cvSoundStart = CreateConVar("umi_sound_start", SOUND_START_DEFAULT, "Sound path played when votes start (phase 1, phase 2, or fallback tie-break).");
+    g_cvSoundWin = CreateConVar("umi_sound_win", SOUND_WIN_DEFAULT, "Sound path played when a map winner is decided.");
 
+    MigrateLegacySoundDefaults();
     AutoExecConfig(true, "umbrella_multimod_interface");
 
     TopMenu topmenu;
     if (LibraryExists("adminmenu") && ((topmenu = GetAdminTopMenu()) != null)) {
         OnAdminMenuReady(topmenu);
+    }
+}
+
+public void OnConfigsExecuted() {
+    MigrateLegacySoundDefaults();
+    RepairGeneratedSoundConfig();
+    PrepareSounds();
+}
+
+void MigrateLegacySoundDefaults() {
+    char sound[PLATFORM_MAX_PATH];
+
+    g_cvSoundStart.GetString(sound, sizeof(sound));
+    if (StrEqual(sound, SOUND_START_LEGACY, false)) {
+        g_cvSoundStart.SetString(SOUND_START_DEFAULT, false, false);
+    }
+
+    g_cvSoundWin.GetString(sound, sizeof(sound));
+    if (StrEqual(sound, SOUND_WIN_LEGACY, false)) {
+        g_cvSoundWin.SetString(SOUND_WIN_DEFAULT, false, false);
+    }
+}
+
+void RepairGeneratedSoundConfig() {
+    if (!FileExists(UMI_CONFIG_PATH)) {
+        return;
+    }
+
+    File input = OpenFile(UMI_CONFIG_PATH, "rt");
+    if (input == null) {
+        return;
+    }
+
+    File output = OpenFile(UMI_CONFIG_TEMP_PATH, "wt");
+    if (output == null) {
+        delete input;
+        return;
+    }
+
+    bool changed = false;
+    char line[512];
+
+    while (input.ReadLine(line, sizeof(line))) {
+        ReplaceString(line, sizeof(line), "\r", "");
+        ReplaceString(line, sizeof(line), "\n", "");
+
+        if (ReplaceString(line, sizeof(line), SOUND_START_LEGACY, SOUND_START_DEFAULT, false) > 0) {
+            changed = true;
+        }
+
+        if (ReplaceString(line, sizeof(line), SOUND_WIN_LEGACY, SOUND_WIN_DEFAULT, false) > 0) {
+            changed = true;
+        }
+
+        output.WriteLine("%s", line);
+    }
+
+    delete input;
+    delete output;
+
+    if (!changed) {
+        DeleteFile(UMI_CONFIG_TEMP_PATH);
+        return;
+    }
+
+    if (!DeleteFile(UMI_CONFIG_PATH)) {
+        DeleteFile(UMI_CONFIG_TEMP_PATH);
+        return;
+    }
+
+    if (!RenameFile(UMI_CONFIG_PATH, UMI_CONFIG_TEMP_PATH)) {
+        LogError("Could not update generated UMI config sound defaults.");
     }
 }
 
@@ -364,6 +444,11 @@ public void OnMapStart() {
     }
 
     CreateTimer(10.0, Timer_CheckTime, _, TIMER_REPEAT | TIMER_FLAG_NO_MAPCHANGE);
+}
+
+public void OnMapEnd() {
+    CancelPhase2Transition();
+    CancelScheduledMapJump();
 }
 
 void ClearCache() {
@@ -846,9 +931,20 @@ void ScheduleMapJump(float delay) {
         return;
     }
 
+    if (delay < MIN_MAP_CHANGE_DELAY) {
+        delay = MIN_MAP_CHANGE_DELAY;
+    }
+
+    int seconds = RoundToCeil(delay);
+    for (int i = 1; i <= MaxClients; i++) {
+        if (IsClientInGame(i) && !IsFakeClient(i)) {
+            CPrintToChat(i, "%s%T", CHAT_PREFIX, "Map_Changing_In", i, g_sNextMap, seconds);
+        }
+    }
+
     g_bMapChangeScheduled = true;
     DebugLog("Scheduling map jump to '%s' in %.1f seconds.", g_sNextMap, delay);
-    g_hMapJumpTimer = CreateTimer(delay, Timer_Jump);
+    g_hMapJumpTimer = CreateTimer(delay, Timer_Jump, _, TIMER_FLAG_NO_MAPCHANGE);
 }
 
 // --- FASE 1: CATEGORIA ---
@@ -1478,9 +1574,9 @@ public int H_AdminSetNextTiming(Menu m, MenuAction a, int p1, int p2) {
         }
         ResetRTVState();
 
-        if (StrEqual(info, "now")) {
+        bool changeNow = StrEqual(info, "now");
+        if (changeNow) {
             g_bChangeOnRoundEnd = false;
-            ScheduleMapJump(3.0);
         } else if (StrEqual(info, "round")) {
             g_bChangeOnRoundEnd = true;
         } else if (StrEqual(info, "mapend")) {
@@ -1500,6 +1596,10 @@ public int H_AdminSetNextTiming(Menu m, MenuAction a, int p1, int p2) {
 
                 CPrintToChat(i, "%s%T", CHAT_PREFIX, "Admin_Action_SetNext", i, g_sNextMap, tStr);
             }
+        }
+
+        if (changeNow) {
+            ScheduleMapJump(MIN_MAP_CHANGE_DELAY);
         }
     } else if (a == MenuAction_End) {
         delete m;
