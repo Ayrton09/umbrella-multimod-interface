@@ -540,4 +540,52 @@
         "pl"        "Grupa {green}%s{default} nie jest już dostępna. Otwórz menu ponownie."
         "tr"        "{green}%s{default} grubu artık kullanılamıyor. Lütfen menüyü yeniden aç."
     }
+    "RTV_Denied_VoteActive"
+    {
+        "en"        "A vote is already in progress."
+        "es"        "Ya hay una votación en curso."
+        "pt"        "Já existe uma votação em andamento."
+        "ru"        "Голосование уже идёт."
+        "chi"       "已有投票正在进行中。"
+        "de"        "Es läuft bereits eine Abstimmung."
+        "fr"        "Un vote est déjà en cours."
+        "pl"        "Głosowanie już trwa."
+        "tr"        "Zaten devam eden bir oylama var."
+    }
+    "RTV_Already_Voted"
+    {
+        "en"        "You already voted for RTV. {lightgreen}%d{default}/{lightgreen}%d{default} needed."
+        "es"        "Ya votaste RTV. {lightgreen}%d{default}/{lightgreen}%d{default} necesarios."
+        "pt"        "Você já votou RTV. {lightgreen}%d{default}/{lightgreen}%d{default} necessários."
+        "ru"        "Вы уже проголосовали за RTV. Нужно {lightgreen}%d{default}/{lightgreen}%d{default}."
+        "chi"       "你已经投过 RTV 了。需要 {lightgreen}%d{default}/{lightgreen}%d{default}。"
+        "de"        "Du hast bereits für RTV gestimmt. {lightgreen}%d{default}/{lightgreen}%d{default} benötigt."
+        "fr"        "Vous avez déjà voté RTV. {lightgreen}%d{default}/{lightgreen}%d{default} requis."
+        "pl"        "Już zagłosowałeś na RTV. Wymagane {lightgreen}%d{default}/{lightgreen}%d{default}."
+        "tr"        "Zaten RTV oyu verdin. {lightgreen}%d{default}/{lightgreen}%d{default} gerekli."
+    }
+    "No_Groups_Loaded"
+    {
+        "en"        "No map groups are loaded. Check {green}umi_mapcycle.txt{default}."
+        "es"        "No hay grupos de mapas cargados. Revisá {green}umi_mapcycle.txt{default}."
+        "pt"        "Nenhum grupo de mapas carregado. Verifique {green}umi_mapcycle.txt{default}."
+        "ru"        "Группы карт не загружены. Проверьте {green}umi_mapcycle.txt{default}."
+        "chi"       "未加载任何地图分类。请检查 {green}umi_mapcycle.txt{default}。"
+        "de"        "Keine Kartengruppen geladen. Prüfe {green}umi_mapcycle.txt{default}."
+        "fr"        "Aucun groupe de cartes chargé. Vérifiez {green}umi_mapcycle.txt{default}."
+        "pl"        "Nie załadowano żadnych grup map. Sprawdź {green}umi_mapcycle.txt{default}."
+        "tr"        "Yüklü harita grubu yok. {green}umi_mapcycle.txt{default} dosyasını kontrol et."
+    }
+    "Vote_Tie_Detected_Multi"
+    {
+        "en"        "Tie detected between {green}%d{default} options. Starting tie-break vote."
+        "es"        "Empate detectado entre {green}%d{default} opciones. Iniciando votación de desempate."
+        "pt"        "Empate detectado entre {green}%d{default} opções. Iniciando votação de desempate."
+        "ru"        "Обнаружена ничья между {green}%d{default} вариантами. Запускаем тай-брейк голосование."
+        "chi"       "检测到 {green}%d{default} 个选项平票。正在开始决胜投票。"
+        "de"        "Gleichstand zwischen {green}%d{default} Optionen. Stichwahl wird gestartet."
+        "fr"        "Égalité détectée entre {green}%d{default} options. Lancement du vote de départage."
+        "pl"        "Wykryto remis między {green}%d{default} opcjami. Rozpoczynamy dogrywkę."
+        "tr"        "{green}%d{default} seçenek arasında eşitlik var. Eşitlik bozma oylaması başlıyor."
+    }
 }

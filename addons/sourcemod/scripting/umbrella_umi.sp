@@ -8,7 +8,7 @@
 #define REQUIRE_PLUGIN
 
 #define PLUGIN_NAME "Umbrella Multimod Interface (UMI)"
-#define PLUGIN_VERSION "1.1.0"
+#define PLUGIN_VERSION "1.1.1"
 #define CHAT_PREFIX "{lightblue}[UMI] {default}"
 #define MIN_MAP_CHANGE_DELAY 3.0
 #define SOUND_START_DEFAULT "admin_plugin/actions/startyourvoting.mp3"
@@ -17,6 +17,8 @@
 #define SOUND_WIN_LEGACY "ui/achievement_earned.wav"
 #define UMI_CONFIG_PATH "cfg/sourcemod/umbrella_multimod_interface.cfg"
 #define UMI_CONFIG_TEMP_PATH "cfg/sourcemod/umbrella_multimod_interface.cfg.tmp"
+#define UMI_CONFIG_BACKUP_PATH "cfg/sourcemod/umbrella_multimod_interface.cfg.bak"
+#define MAX_TIEBREAK_OPTIONS 16
 
 public Plugin myinfo = {
     name = PLUGIN_NAME,
@@ -117,7 +119,6 @@ public void OnPluginStart() {
     g_cvSoundStart = CreateConVar("umi_sound_start", SOUND_START_DEFAULT, "Sound path played when votes start (phase 1, phase 2, or fallback tie-break).");
     g_cvSoundWin = CreateConVar("umi_sound_win", SOUND_WIN_DEFAULT, "Sound path played when a map winner is decided.");
 
-    MigrateLegacySoundDefaults();
     AutoExecConfig(true, "umbrella_multimod_interface");
 
     TopMenu topmenu;
@@ -151,6 +152,27 @@ void RepairGeneratedSoundConfig() {
         return;
     }
 
+    // Read-only probe first: there is nothing to do on the vast majority of
+    // map changes, so do not rewrite the whole file every time.
+    File probe = OpenFile(UMI_CONFIG_PATH, "rt");
+    if (probe == null) {
+        return;
+    }
+
+    bool needsRepair = false;
+    char line[512];
+    while (probe.ReadLine(line, sizeof(line))) {
+        if (StrContains(line, SOUND_START_LEGACY, false) != -1 || StrContains(line, SOUND_WIN_LEGACY, false) != -1) {
+            needsRepair = true;
+            break;
+        }
+    }
+    delete probe;
+
+    if (!needsRepair) {
+        return;
+    }
+
     File input = OpenFile(UMI_CONFIG_PATH, "rt");
     if (input == null) {
         return;
@@ -162,40 +184,33 @@ void RepairGeneratedSoundConfig() {
         return;
     }
 
-    bool changed = false;
-    char line[512];
-
     while (input.ReadLine(line, sizeof(line))) {
         ReplaceString(line, sizeof(line), "\r", "");
         ReplaceString(line, sizeof(line), "\n", "");
-
-        if (ReplaceString(line, sizeof(line), SOUND_START_LEGACY, SOUND_START_DEFAULT, false) > 0) {
-            changed = true;
-        }
-
-        if (ReplaceString(line, sizeof(line), SOUND_WIN_LEGACY, SOUND_WIN_DEFAULT, false) > 0) {
-            changed = true;
-        }
-
+        ReplaceString(line, sizeof(line), SOUND_START_LEGACY, SOUND_START_DEFAULT, false);
+        ReplaceString(line, sizeof(line), SOUND_WIN_LEGACY, SOUND_WIN_DEFAULT, false);
         output.WriteLine("%s", line);
     }
 
     delete input;
     delete output;
 
-    if (!changed) {
-        DeleteFile(UMI_CONFIG_TEMP_PATH);
-        return;
-    }
-
-    if (!DeleteFile(UMI_CONFIG_PATH)) {
+    // Keep the original around until the replacement is actually in place.
+    DeleteFile(UMI_CONFIG_BACKUP_PATH);
+    if (!RenameFile(UMI_CONFIG_BACKUP_PATH, UMI_CONFIG_PATH)) {
+        LogError("UMI: Could not back up the generated config; sound defaults left untouched.");
         DeleteFile(UMI_CONFIG_TEMP_PATH);
         return;
     }
 
     if (!RenameFile(UMI_CONFIG_PATH, UMI_CONFIG_TEMP_PATH)) {
-        LogError("Could not update generated UMI config sound defaults.");
+        LogError("UMI: Could not update generated config sound defaults; restoring backup.");
+        DeleteFile(UMI_CONFIG_TEMP_PATH);
+        RenameFile(UMI_CONFIG_PATH, UMI_CONFIG_BACKUP_PATH);
+        return;
     }
+
+    DeleteFile(UMI_CONFIG_BACKUP_PATH);
 }
 
 public void OnLibraryRemoved(const char[] name) {
@@ -254,8 +269,8 @@ public void AdminMenu_UMI_Items(TopMenu topmenu, TopMenuAction action, TopMenuOb
         if (StrEqual(name, "umi_force")) {
             if (g_bVoteActive) {
                 CPrintToChat(param, "%s%T", CHAT_PREFIX, "Admin_Error_VoteActive", param);
-            } else {
-                StartPhase1(3);
+            } else if (!StartPhase1(3)) {
+                CPrintToChat(param, "%s%T", CHAT_PREFIX, "No_Groups_Loaded", param);
             }
         } else if (StrEqual(name, "umi_setnext")) {
             ShowAdminSetNextGroupMenu(param);
@@ -304,7 +319,7 @@ public void AdminMenu_UMI_Items(TopMenu topmenu, TopMenuAction action, TopMenuOb
 }
 
 void PrepareSounds() {
-    char sS[64], sW[64], sT[64], fP[PLATFORM_MAX_PATH];
+    char sS[PLATFORM_MAX_PATH], sW[PLATFORM_MAX_PATH], sT[PLATFORM_MAX_PATH], fP[PLATFORM_MAX_PATH];
     g_cvSoundStart.GetString(sS, sizeof(sS));
     g_cvSoundWin.GetString(sW, sizeof(sW));
     g_cvTieBreakSound.GetString(sT, sizeof(sT));
@@ -335,7 +350,7 @@ void PrepareSounds() {
 }
 
 void PlayVoteSound(int type) {
-    char s[64];
+    char s[PLATFORM_MAX_PATH];
     if (type == 1) {
         g_cvSoundStart.GetString(s, sizeof(s));
     } else {
@@ -352,7 +367,7 @@ void PlayVoteSound(int type) {
 }
 
 void PlayTieBreakSound() {
-    char s[64];
+    char s[PLATFORM_MAX_PATH];
     g_cvTieBreakSound.GetString(s, sizeof(s));
     if (s[0] == '\0') {
         PlayVoteSound(1);
@@ -436,12 +451,7 @@ public void OnMapStart() {
     ClearNextMapSelection();
     strcopy(g_sWinningGroup, sizeof(g_sWinningGroup), "");
 
-    char currentMap[64];
-    GetCurrentMap(currentMap, sizeof(currentMap));
-    g_alMapHistory.PushString(currentMap);
-    if (g_alMapHistory.Length > g_cvHistory.IntValue) {
-        g_alMapHistory.Erase(0);
-    }
+    PushCurrentMapToHistory();
 
     CreateTimer(10.0, Timer_CheckTime, _, TIMER_REPEAT | TIMER_FLAG_NO_MAPCHANGE);
 }
@@ -547,13 +557,9 @@ bool TryChangeToWorkshopMap(const char[] workshopId, const char[] fallbackMap) {
         return false;
     }
 
-    if (CommandExists("ds_workshop_changelevel")) {
-        ServerCommand("ds_workshop_changelevel %s", workshopId);
-        ServerExecute();
-        DebugLog("Workshop change using ds_workshop_changelevel %s.", workshopId);
-        return true;
-    }
-
+    // host_workshop_map is the command that takes a published file id.
+    // ds_workshop_changelevel expects a map NAME from the hosted collection,
+    // so it is only usable when the entry declares one.
     if (CommandExists("host_workshop_map")) {
         ServerCommand("host_workshop_map %s", workshopId);
         ServerExecute();
@@ -565,6 +571,13 @@ bool TryChangeToWorkshopMap(const char[] workshopId, const char[] fallbackMap) {
         ServerCommand("workshop_changelevel %s", workshopId);
         ServerExecute();
         DebugLog("Workshop change using workshop_changelevel %s.", workshopId);
+        return true;
+    }
+
+    if (fallbackMap[0] != '\0' && CommandExists("ds_workshop_changelevel")) {
+        ServerCommand("ds_workshop_changelevel %s", fallbackMap);
+        ServerExecute();
+        DebugLog("Workshop change using ds_workshop_changelevel %s.", fallbackMap);
         return true;
     }
 
@@ -651,10 +664,25 @@ void ParseCycle() {
             }
 
             if (al.Length > 0) {
-                g_alGroupNames.PushString(g);
-                g_smGroupMaps.SetValue(g, al);
-                loadedGroups++;
-                DebugLog("Loaded group '%s' with %d maps.", g, al.Length);
+                ArrayList existing;
+                if (g_smGroupMaps.GetValue(g, existing) && existing != null) {
+                    // Duplicate section name: merge into the existing list, since
+                    // overwriting it here would leak the previous handle.
+                    for (int i = 0; i < al.Length; i++) {
+                        char dupMap[64];
+                        al.GetString(i, dupMap, sizeof(dupMap));
+                        if (existing.FindString(dupMap) == -1) {
+                            existing.PushString(dupMap);
+                        }
+                    }
+                    delete al;
+                    DebugLog("Merged duplicate group '%s' (%d maps total).", g, existing.Length);
+                } else {
+                    g_alGroupNames.PushString(g);
+                    g_smGroupMaps.SetValue(g, al);
+                    loadedGroups++;
+                    DebugLog("Loaded group '%s' with %d maps.", g, al.Length);
+                }
             } else {
                 LogError("UMI: Group '%s' has no valid maps and was excluded (invalid: %d).", g, invalidCount);
                 delete al;
@@ -692,7 +720,24 @@ public void OnClientDisconnect(int client) {
         DebugLog("Client %d disconnected; RTV progress adjusted to %d.", client, g_iVotesRTV);
     }
 
+    if (IsClientConnected(client) && !IsFakeClient(client)) {
+        char steam[32];
+        if (GetClientAuthId(client, AuthId_Steam2, steam, sizeof(steam), false)) {
+            g_smPlayerNoms.Remove(steam);
+        }
+    }
+
     g_sAdminSelectedMap[client][0] = '\0';
+}
+
+public void OnClientDisconnect_Post(int client) {
+    // Re-checked here rather than in OnClientDisconnect: at that point the
+    // leaver still counts as in-game, so GetRealCount() would be off by one.
+    if (g_bVoteActive || g_iVotesRTV <= 0) {
+        return;
+    }
+
+    CheckRTVThreshold();
 }
 
 void ResetRTVState() {
@@ -757,86 +802,80 @@ void ResolvePhase2Winner(const char[] win) {
     ProcessPhase2Win(win);
 }
 
-void StartTieBreakPhase1(Menu sourceMenu, int itemIndexA, int itemIndexB) {
-    char infoA[64], infoB[64], displayA[128], displayB[128];
-    sourceMenu.GetItem(itemIndexA, infoA, sizeof(infoA), _, displayA, sizeof(displayA));
-    sourceMenu.GetItem(itemIndexB, infoB, sizeof(infoB), _, displayB, sizeof(displayB));
-
-    Menu tieMenu = new Menu(H_Phase1);
+void StartTieBreakPhase1(Menu sourceMenu, const int[] itemIndexes, int count) {
+    Menu tieMenu = new Menu(H_Phase1, view_as<MenuAction>(MENU_ACTIONS_DEFAULT|MenuAction_Display|MenuAction_DisplayItem|MenuAction_VoteCancel));
     tieMenu.VoteResultCallback = VCB_Phase1;
 
     char title[128];
     Format(title, sizeof(title), "%T", "Menu_Title_Tiebreak_Phase1", LANG_SERVER);
     tieMenu.SetTitle(title);
-    tieMenu.AddItem(infoA, displayA);
-    tieMenu.AddItem(infoB, displayB);
+
+    // Every tied option goes to the runoff, not just the first two.
+    char displayA[128], displayB[128];
+    for (int i = 0; i < count; i++) {
+        char info[64], display[128];
+        sourceMenu.GetItem(itemIndexes[i], info, sizeof(info), _, display, sizeof(display));
+        tieMenu.AddItem(info, display);
+
+        if (i == 0) {
+            strcopy(displayA, sizeof(displayA), display);
+        } else if (i == 1) {
+            strcopy(displayB, sizeof(displayB), display);
+        }
+    }
     tieMenu.ExitButton = false;
 
     g_bPhase1TieBreakActive = true;
-    if (g_cvTieBreakAnnounce.BoolValue) {
-        for (int i = 1; i <= MaxClients; i++) {
-            if (IsClientInGame(i) && !IsFakeClient(i)) {
-                CPrintToChat(i, "%s%T", CHAT_PREFIX, "Vote_Tie_Detected", i, displayA, displayB);
-            }
-        }
-    }
-    DebugLog("Phase1 tie-break started between '%s' and '%s' (round %d).", infoA, infoB, g_iPhase1TieBreakRounds);
+    AnnounceTieBreak(count, displayA, displayB);
+    DebugLog("Phase1 tie-break started between %d options (round %d).", count, g_iPhase1TieBreakRounds);
     PlayTieBreakSound();
     if (!tieMenu.DisplayVoteToAll(g_cvTieBreakTime.IntValue)) {
         LogError("UMI: Failed to display phase 1 tie-break vote.");
         g_bPhase1TieBreakActive = false;
-        char fallback[64];
-        strcopy(fallback, sizeof(fallback), (GetRandomInt(0, 1) == 0) ? infoA : infoB);
-        if (g_cvTieBreakAnnounce.BoolValue) {
-            for (int i = 1; i <= MaxClients; i++) {
-                if (IsClientInGame(i) && !IsFakeClient(i)) {
-                    CPrintToChat(i, "%s%T", CHAT_PREFIX, "Vote_Tie_Fallback_Random", i, fallback);
-                }
-            }
-        }
+
+        char fallback[64], fallbackDisplay[128];
+        sourceMenu.GetItem(itemIndexes[GetRandomInt(0, count - 1)], fallback, sizeof(fallback), _, fallbackDisplay, sizeof(fallbackDisplay));
+        AnnounceRandomTieFallback(fallbackDisplay);
         DebugLog("Phase1 tie-break display failed. Random fallback winner: '%s'.", fallback);
         ResolvePhase1Winner(fallback);
         delete tieMenu;
     }
 }
 
-void StartTieBreakPhase2(Menu sourceMenu, int itemIndexA, int itemIndexB) {
-    char infoA[64], infoB[64], displayA[128], displayB[128];
-    sourceMenu.GetItem(itemIndexA, infoA, sizeof(infoA), _, displayA, sizeof(displayA));
-    sourceMenu.GetItem(itemIndexB, infoB, sizeof(infoB), _, displayB, sizeof(displayB));
-
-    Menu tieMenu = new Menu(H_Phase2);
+void StartTieBreakPhase2(Menu sourceMenu, const int[] itemIndexes, int count) {
+    Menu tieMenu = new Menu(H_Phase2, view_as<MenuAction>(MENU_ACTIONS_DEFAULT|MenuAction_Display|MenuAction_VoteCancel));
     tieMenu.VoteResultCallback = VCB_Phase2;
 
     char title[160];
     Format(title, sizeof(title), "%T", "Menu_Title_Tiebreak_Phase2", LANG_SERVER, g_sWinningGroup);
     tieMenu.SetTitle(title);
-    tieMenu.AddItem(infoA, displayA);
-    tieMenu.AddItem(infoB, displayB);
+
+    // Every tied option goes to the runoff, not just the first two.
+    char displayA[128], displayB[128];
+    for (int i = 0; i < count; i++) {
+        char info[64], display[128];
+        sourceMenu.GetItem(itemIndexes[i], info, sizeof(info), _, display, sizeof(display));
+        tieMenu.AddItem(info, display);
+
+        if (i == 0) {
+            strcopy(displayA, sizeof(displayA), display);
+        } else if (i == 1) {
+            strcopy(displayB, sizeof(displayB), display);
+        }
+    }
     tieMenu.ExitButton = false;
 
     g_bPhase2TieBreakActive = true;
-    if (g_cvTieBreakAnnounce.BoolValue) {
-        for (int i = 1; i <= MaxClients; i++) {
-            if (IsClientInGame(i) && !IsFakeClient(i)) {
-                CPrintToChat(i, "%s%T", CHAT_PREFIX, "Vote_Tie_Detected", i, displayA, displayB);
-            }
-        }
-    }
-    DebugLog("Phase2 tie-break started in group '%s' between '%s' and '%s' (round %d).", g_sWinningGroup, infoA, infoB, g_iPhase2TieBreakRounds);
+    AnnounceTieBreak(count, displayA, displayB);
+    DebugLog("Phase2 tie-break started in group '%s' between %d options (round %d).", g_sWinningGroup, count, g_iPhase2TieBreakRounds);
     PlayTieBreakSound();
     if (!tieMenu.DisplayVoteToAll(g_cvTieBreakTime.IntValue)) {
         LogError("UMI: Failed to display phase 2 tie-break vote.");
         g_bPhase2TieBreakActive = false;
-        char fallback[64];
-        strcopy(fallback, sizeof(fallback), (GetRandomInt(0, 1) == 0) ? infoA : infoB);
-        if (g_cvTieBreakAnnounce.BoolValue) {
-            for (int i = 1; i <= MaxClients; i++) {
-                if (IsClientInGame(i) && !IsFakeClient(i)) {
-                    CPrintToChat(i, "%s%T", CHAT_PREFIX, "Vote_Tie_Fallback_Random", i, fallback);
-                }
-            }
-        }
+
+        char fallback[64], fallbackDisplay[128];
+        sourceMenu.GetItem(itemIndexes[GetRandomInt(0, count - 1)], fallback, sizeof(fallback), _, fallbackDisplay, sizeof(fallbackDisplay));
+        AnnounceRandomTieFallback(fallbackDisplay);
         DebugLog("Phase2 tie-break display failed. Random fallback winner: '%s'.", fallback);
         ResolvePhase2Winner(fallback);
         delete tieMenu;
@@ -857,7 +896,17 @@ public void VCB_Phase1(Menu menu, int num_votes, int num_clients, const int[][] 
     if (tiedCount >= 2) {
         if (g_cvTieBreakEnable.BoolValue && g_iPhase1TieBreakRounds < g_cvTieBreakMaxRounds.IntValue) {
             g_iPhase1TieBreakRounds++;
-            StartTieBreakPhase1(menu, item_info[0][VOTEINFO_ITEM_INDEX], item_info[1][VOTEINFO_ITEM_INDEX]);
+
+            int tied[MAX_TIEBREAK_OPTIONS];
+            int used = 0;
+            for (int i = 0; i < tiedCount && used < MAX_TIEBREAK_OPTIONS; i++) {
+                tied[used++] = item_info[i][VOTEINFO_ITEM_INDEX];
+            }
+            if (used < tiedCount) {
+                DebugLog("Phase1 tie-break truncated from %d to %d options.", tiedCount, used);
+            }
+
+            StartTieBreakPhase1(menu, tied, used);
             return;
         }
 
@@ -865,13 +914,7 @@ public void VCB_Phase1(Menu menu, int num_votes, int num_clients, const int[][] 
         int winIndex = item_info[pick][VOTEINFO_ITEM_INDEX];
         char win[64];
         menu.GetItem(winIndex, win, sizeof(win));
-        if (g_cvTieBreakAnnounce.BoolValue) {
-            for (int i = 1; i <= MaxClients; i++) {
-                if (IsClientInGame(i) && !IsFakeClient(i)) {
-                    CPrintToChat(i, "%s%T", CHAT_PREFIX, "Vote_Tie_Fallback_Random", i, win);
-                }
-            }
-        }
+        AnnounceRandomTieFallback(win);
         DebugLog("Phase1 tie fallback picked '%s' (tied=%d, rounds=%d, enabled=%d).", win, tiedCount, g_iPhase1TieBreakRounds, g_cvTieBreakEnable.IntValue);
         ResolvePhase1Winner(win);
         return;
@@ -897,7 +940,17 @@ public void VCB_Phase2(Menu menu, int num_votes, int num_clients, const int[][] 
     if (tiedCount >= 2) {
         if (g_cvTieBreakEnable.BoolValue && g_iPhase2TieBreakRounds < g_cvTieBreakMaxRounds.IntValue) {
             g_iPhase2TieBreakRounds++;
-            StartTieBreakPhase2(menu, item_info[0][VOTEINFO_ITEM_INDEX], item_info[1][VOTEINFO_ITEM_INDEX]);
+
+            int tied[MAX_TIEBREAK_OPTIONS];
+            int used = 0;
+            for (int i = 0; i < tiedCount && used < MAX_TIEBREAK_OPTIONS; i++) {
+                tied[used++] = item_info[i][VOTEINFO_ITEM_INDEX];
+            }
+            if (used < tiedCount) {
+                DebugLog("Phase2 tie-break truncated from %d to %d options.", tiedCount, used);
+            }
+
+            StartTieBreakPhase2(menu, tied, used);
             return;
         }
 
@@ -907,13 +960,7 @@ public void VCB_Phase2(Menu menu, int num_votes, int num_clients, const int[][] 
         char winDisplay[64];
         menu.GetItem(winIndex, win, sizeof(win));
         GetMapEntryDisplayName(win, winDisplay, sizeof(winDisplay));
-        if (g_cvTieBreakAnnounce.BoolValue) {
-            for (int i = 1; i <= MaxClients; i++) {
-                if (IsClientInGame(i) && !IsFakeClient(i)) {
-                    CPrintToChat(i, "%s%T", CHAT_PREFIX, "Vote_Tie_Fallback_Random", i, winDisplay);
-                }
-            }
-        }
+        AnnounceRandomTieFallback(winDisplay);
         DebugLog("Phase2 tie fallback picked '%s' (group='%s', tied=%d, rounds=%d, enabled=%d).", winDisplay, g_sWinningGroup, tiedCount, g_iPhase2TieBreakRounds, g_cvTieBreakEnable.IntValue);
         ResolvePhase2Winner(win);
         return;
@@ -966,7 +1013,7 @@ bool StartPhase1(int trigger) {
     g_iTriggerType = trigger;
     PlayVoteSound(1);
 
-    Menu menu = new Menu(H_Phase1);
+    Menu menu = new Menu(H_Phase1, view_as<MenuAction>(MENU_ACTIONS_DEFAULT|MenuAction_Display|MenuAction_DisplayItem|MenuAction_VoteCancel));
     menu.VoteResultCallback = VCB_Phase1;
     char title[128];
     Format(title, sizeof(title), "%T", "Menu_Title_Phase1", LANG_SERVER);
@@ -995,11 +1042,29 @@ bool StartPhase1(int trigger) {
 }
 
 public int H_Phase1(Menu menu, MenuAction action, int p1, int p2) {
-    if (action == MenuAction_VoteEnd) {
-        char win[64];
-        menu.GetItem(p1, win, sizeof(win));
-        ResolvePhase1Winner(win);
-    } else if (action == MenuAction_VoteCancel && p1 == VoteCancel_NoVotes) {
+    if (action == MenuAction_Display) {
+        // The panel is shared by every voter, so the title has to be translated
+        // per client here instead of once with LANG_SERVER.
+        char title[128];
+        Format(title, sizeof(title), "%T", g_bPhase1TieBreakActive ? "Menu_Title_Tiebreak_Phase1" : "Menu_Title_Phase1", p1);
+        Panel panel = view_as<Panel>(p2);
+        panel.SetTitle(title);
+    } else if (action == MenuAction_DisplayItem) {
+        char info[64];
+        menu.GetItem(p2, info, sizeof(info));
+        if (StrEqual(info, "@ext")) {
+            char extText[64];
+            Format(extText, sizeof(extText), "%T", "Extend_Map", p1);
+            return RedrawMenuItem(extText);
+        }
+    } else if (action == MenuAction_VoteCancel) {
+        if (p1 != VoteCancel_NoVotes) {
+            // Any other cancellation must clear the tie-break flag, otherwise
+            // MenuAction_End below leaves g_bVoteActive stuck on.
+            g_bPhase1TieBreakActive = false;
+            return 0;
+        }
+
         char win[64];
         if (g_bPhase1TieBreakActive && menu.ItemCount > 0) {
             int randomItem = GetRandomInt(0, menu.ItemCount - 1);
@@ -1037,7 +1102,7 @@ public Action Timer_Phase2(Handle timer) {
         return Plugin_Stop;
     }
 
-    Menu menu = new Menu(H_Phase2);
+    Menu menu = new Menu(H_Phase2, view_as<MenuAction>(MENU_ACTIONS_DEFAULT|MenuAction_Display|MenuAction_VoteCancel));
     menu.VoteResultCallback = VCB_Phase2;
     char title[128];
     Format(title, sizeof(title), "%T", "Menu_Title_Phase2", LANG_SERVER, g_sWinningGroup);
@@ -1132,11 +1197,21 @@ public Action Timer_Phase2(Handle timer) {
 }
 
 public int H_Phase2(Menu menu, MenuAction action, int p1, int p2) {
-    if (action == MenuAction_VoteEnd) {
-        char win[64];
-        menu.GetItem(p1, win, sizeof(win));
-        ResolvePhase2Winner(win);
-    } else if (action == MenuAction_VoteCancel && p1 == VoteCancel_NoVotes) {
+    if (action == MenuAction_Display) {
+        // The panel is shared by every voter, so the title has to be translated
+        // per client here instead of once with LANG_SERVER.
+        char title[160];
+        Format(title, sizeof(title), "%T", g_bPhase2TieBreakActive ? "Menu_Title_Tiebreak_Phase2" : "Menu_Title_Phase2", p1, g_sWinningGroup);
+        Panel panel = view_as<Panel>(p2);
+        panel.SetTitle(title);
+    } else if (action == MenuAction_VoteCancel) {
+        if (p1 != VoteCancel_NoVotes) {
+            // Any other cancellation must clear the tie-break flag, otherwise
+            // MenuAction_End below leaves g_bVoteActive stuck on.
+            g_bPhase2TieBreakActive = false;
+            return 0;
+        }
+
         char win[64];
         if (g_bPhase2TieBreakActive && menu.ItemCount > 0) {
             int randomItem = GetRandomInt(0, menu.ItemCount - 1);
@@ -1171,6 +1246,7 @@ void ProcessPhase2Win(const char[] win) {
 
     if (g_bNextMapIsWorkshop) {
         DebugLog("Phase2 winner is workshop entry '%s' (id=%s, fallback='%s').", g_sNextMap, g_sNextWorkshopId, g_sNextMapTarget);
+        SyncWorkshopNextMap();
     } else if (!SetNextMap(g_sNextMapTarget)) {
         LogError("UMI: SetNextMap failed for voted map '%s'.", g_sNextMapTarget);
     }
@@ -1195,6 +1271,110 @@ void ProcessPhase2Win(const char[] win) {
     }
 }
 
+void PushMapHistory(const char[] map) {
+    if (map[0] == '\0' || g_alMapHistory.FindString(map) != -1) {
+        return;
+    }
+
+    g_alMapHistory.PushString(map);
+    while (g_alMapHistory.Length > g_cvHistory.IntValue) {
+        g_alMapHistory.Erase(0);
+    }
+}
+
+bool ExtractWorkshopId(const char[] mapPath, char[] id, int maxlen) {
+    id[0] = '\0';
+
+    if (strncmp(mapPath, "workshop", 8, false) != 0) {
+        return false;
+    }
+
+    // TF2 style: workshop/cp_name.ugc123456789
+    int ugc = StrContains(mapPath, ".ugc", false);
+    if (ugc != -1) {
+        strcopy(id, maxlen, mapPath[ugc + 4]);
+        return IsNumericString(id);
+    }
+
+    // CS:GO style: workshop/123456789/de_name
+    int start = 8;
+    if (mapPath[start] != '/' && mapPath[start] != '\\') {
+        return false;
+    }
+    start++;
+
+    int len = 0;
+    while (mapPath[start + len] != '\0' && mapPath[start + len] != '/' && mapPath[start + len] != '\\' && len < maxlen - 1) {
+        id[len] = mapPath[start + len];
+        len++;
+    }
+    id[len] = '\0';
+    return IsNumericString(id);
+}
+
+void PushCurrentMapToHistory() {
+    char currentMap[PLATFORM_MAX_PATH];
+    GetCurrentMap(currentMap, sizeof(currentMap));
+
+    // Workshop maps are reported as a path, never as the plain name a mapcycle
+    // entry uses, so normalize before recording them.
+    char display[64];
+    if (!GetMapDisplayName(currentMap, display, sizeof(display)) || display[0] == '\0') {
+        strcopy(display, sizeof(display), currentMap);
+    }
+    PushMapHistory(display);
+
+    // Entries keyed by the raw workshop id would still never match the name.
+    char workshopId[32], group[64];
+    if (ExtractWorkshopId(currentMap, workshopId, sizeof(workshopId))
+        && !StrEqual(workshopId, display, false)
+        && g_smMapToGroup.GetString(workshopId, group, sizeof(group))) {
+        PushMapHistory(workshopId);
+    }
+}
+
+void SyncWorkshopNextMap() {
+    // Keep the engine/nextmap value in sync when the real map name is known, so a
+    // time limit reached before our own change does not fall back to a stale map.
+    if (g_sNextMapTarget[0] == '\0' || !IsMapValid(g_sNextMapTarget)) {
+        return;
+    }
+
+    if (!SetNextMap(g_sNextMapTarget)) {
+        LogError("UMI: SetNextMap failed for workshop fallback '%s'.", g_sNextMapTarget);
+    }
+}
+
+void AnnounceTieBreak(int tiedCount, const char[] displayA, const char[] displayB) {
+    if (!g_cvTieBreakAnnounce.BoolValue) {
+        return;
+    }
+
+    for (int i = 1; i <= MaxClients; i++) {
+        if (!IsClientInGame(i) || IsFakeClient(i)) {
+            continue;
+        }
+
+        if (tiedCount > 2) {
+            CPrintToChat(i, "%s%T", CHAT_PREFIX, "Vote_Tie_Detected_Multi", i, tiedCount);
+        } else {
+            CPrintToChat(i, "%s%T", CHAT_PREFIX, "Vote_Tie_Detected", i, displayA, displayB);
+        }
+    }
+}
+
+void AnnounceRandomTieFallback(const char[] display) {
+    if (!g_cvTieBreakAnnounce.BoolValue) {
+        return;
+    }
+
+    for (int i = 1; i <= MaxClients; i++) {
+        if (IsClientInGame(i) && !IsFakeClient(i)) {
+            CPrintToChat(i, "%s%T", CHAT_PREFIX, "Vote_Tie_Fallback_Random", i, display);
+        }
+    }
+}
+
 bool IsInHistory(const char[] map) {
     for (int i = 0; i < g_alMapHistory.Length; i++) {
         char m[64];
@@ -1207,51 +1387,66 @@ bool IsInHistory(const char[] map) {
 }
 
 // --- COMANDOS ---
+int GetRTVRequired() {
+    return RoundToCeil(GetRealCount() * g_cvRTVRatio.FloatValue);
+}
+
+void CheckRTVThreshold() {
+    if (g_iVotesRTV < GetRTVRequired()) {
+        return;
+    }
+
+    if (!StrEqual(g_sNextMap, "")) {
+        for (int i = 1; i <= MaxClients; i++) {
+            if (IsClientInGame(i) && !IsFakeClient(i)) {
+                CPrintToChat(i, "%s%T", CHAT_PREFIX, "RTV_Skip_Won", i, g_sNextMap);
+            }
+        }
+        ResetRTVState();
+        ScheduleMapJump(3.0);
+        return;
+    }
+
+    if (!StartPhase1(1)) {
+        LogError("UMI: RTV threshold reached but phase 1 could not start.");
+        ResetRTVState();
+    }
+}
+
 public Action Cmd_RTV(int client, int args) {
-    if (!IsValidHumanClient(client) || g_bVoteActive || g_bPlayerRTVd[client]) {
+    if (!IsValidHumanClient(client)) {
         return Plugin_Handled;
     }
 
-    float timeleft = GetGameTime() - g_fMapStartTime;
-    if (timeleft < g_cvRTVDelay.FloatValue * 60.0) {
-        int diff = RoundToNearest((g_cvRTVDelay.FloatValue * 60.0) - timeleft);
+    if (g_bVoteActive) {
+        CPrintToChat(client, "%s%T", CHAT_PREFIX, "RTV_Denied_VoteActive", client);
+        return Plugin_Handled;
+    }
+
+    if (g_bPlayerRTVd[client]) {
+        CPrintToChat(client, "%s%T", CHAT_PREFIX, "RTV_Already_Voted", client, g_iVotesRTV, GetRTVRequired());
+        return Plugin_Handled;
+    }
+
+    float elapsed = GetGameTime() - g_fMapStartTime;
+    if (elapsed < g_cvRTVDelay.FloatValue * 60.0) {
+        int diff = RoundToNearest((g_cvRTVDelay.FloatValue * 60.0) - elapsed);
         CPrintToChat(client, "%s%T", CHAT_PREFIX, "RTV_Denied", client, diff / 60, diff % 60);
         return Plugin_Handled;
     }
 
     g_bPlayerRTVd[client] = true;
     g_iVotesRTV++;
-    int req = RoundToCeil(GetRealCount() * g_cvRTVRatio.FloatValue);
 
-    if (!StrEqual(g_sNextMap, "")) {
-        for (int i = 1; i <= MaxClients; i++) {
-            if (IsClientInGame(i) && !IsFakeClient(i)) {
-                CPrintToChat(i, "%s%T", CHAT_PREFIX, "RTV_Skip_Initiated", i, client, g_iVotesRTV, req);
-            }
-        }
-
-        if (g_iVotesRTV >= req) {
-            for (int i = 1; i <= MaxClients; i++) {
-                if (IsClientInGame(i) && !IsFakeClient(i)) {
-                    CPrintToChat(i, "%s%T", CHAT_PREFIX, "RTV_Skip_Won", i, g_sNextMap);
-                }
-            }
-            ResetRTVState();
-            ScheduleMapJump(3.0);
-        }
-    } else {
-        for (int i = 1; i <= MaxClients; i++) {
-            if (IsClientInGame(i) && !IsFakeClient(i)) {
-                CPrintToChat(i, "%s%T", CHAT_PREFIX, "RTV_Initiated", i, client, g_iVotesRTV, req);
-            }
-        }
-        if (g_iVotesRTV >= req) {
-            if (!StartPhase1(1)) {
-                LogError("UMI: RTV threshold reached but phase 1 could not start.");
-                ResetRTVState();
-            }
+    int req = GetRTVRequired();
+    bool skipMode = !StrEqual(g_sNextMap, "");
+    for (int i = 1; i <= MaxClients; i++) {
+        if (IsClientInGame(i) && !IsFakeClient(i)) {
+            CPrintToChat(i, "%s%T", CHAT_PREFIX, (skipMode ? "RTV_Skip_Initiated" : "RTV_Initiated"), i, client, g_iVotesRTV, req);
         }
     }
+
+    CheckRTVThreshold();
     return Plugin_Handled;
 }
 
@@ -1262,6 +1457,11 @@ public Action Cmd_Nominate(int client, int args) {
 
     if (!StrEqual(g_sNextMap, "")) {
         CPrintToChat(client, "%s%T", CHAT_PREFIX, "Nominate_Denied_Decided", client, g_sNextMap);
+        return Plugin_Handled;
+    }
+
+    if (g_alGroupNames.Length == 0) {
+        CPrintToChat(client, "%s%T", CHAT_PREFIX, "No_Groups_Loaded", client);
         return Plugin_Handled;
     }
 
@@ -1297,6 +1497,19 @@ public int H_NomGroup(Menu m, MenuAction a, int p1, int p2) {
             return 0;
         }
 
+        // Build the nominated-map lookup once instead of snapshotting per map.
+        ArrayList nominated = new ArrayList(ByteCountToCells(64));
+        StringMapSnapshot snap = g_smPlayerNoms.Snapshot();
+        for (int j = 0; j < snap.Length; j++) {
+            char k[32], v[64];
+            snap.GetKey(j, k, sizeof(k));
+            g_smPlayerNoms.GetString(k, v, sizeof(v));
+            if (v[0] != '\0' && nominated.FindString(v) == -1) {
+                nominated.PushString(v);
+            }
+        }
+        delete snap;
+
         for (int i = 0; i < al.Length; i++) {
             char map[64];
             char mapDisplay[64];
@@ -1307,29 +1520,15 @@ public int H_NomGroup(Menu m, MenuAction a, int p1, int p2) {
                 char disp[128];
                 Format(disp, sizeof(disp), "%s (%T)", mapDisplay, "Recently_Played", p1);
                 m2.AddItem(map, disp, ITEMDRAW_DISABLED);
+            } else if (nominated.FindString(map) != -1) {
+                char d[128];
+                Format(d, sizeof(d), "%s (%T)", mapDisplay, "Already_Nominated", p1);
+                m2.AddItem(map, d, ITEMDRAW_DISABLED);
             } else {
-                bool alNom = false;
-                StringMapSnapshot snap = g_smPlayerNoms.Snapshot();
-                for (int j = 0; j < snap.Length; j++) {
-                    char k[32], v[64];
-                    snap.GetKey(j, k, sizeof(k));
-                    g_smPlayerNoms.GetString(k, v, sizeof(v));
-                    if (StrEqual(map, v, false)) {
-                        alNom = true;
-                        break;
-                    }
-                }
-                delete snap;
-
-                if (alNom) {
-                    char d[128];
-                    Format(d, sizeof(d), "%s (%T)", mapDisplay, "Already_Nominated", p1);
-                    m2.AddItem(map, d, ITEMDRAW_DISABLED);
-                } else {
-                    m2.AddItem(map, mapDisplay);
-                }
+                m2.AddItem(map, mapDisplay);
             }
         }
+        delete nominated;
         m2.Display(p1, 20);
     } else if (a == MenuAction_End) {
         delete m;
@@ -1397,19 +1596,28 @@ public Action Listener_Chat(int client, const char[] cmd, int argc) {
 
 public Action Timer_CheckTime(Handle t) {
     int tl;
-    if (GetMapTimeLeft(tl)) {
-        float voteWindow = g_cvVoteTime.FloatValue * 60.0;
-        if (tl > 0 && float(tl) <= voteWindow && !g_bVoteActive && !g_bAutoVoteFired) {
-            if (StrEqual(g_sNextMap, "")) {
-                if (StartPhase1(2)) {
-                    g_bAutoVoteFired = true;
-                } else {
-                    DebugLog("Auto-vote trigger skipped because phase 1 could not start.");
-                }
+    if (!GetMapTimeLeft(tl)) {
+        return Plugin_Continue;
+    }
+
+    // GetMapTimeLeft() reports a negative value both when the limit has expired
+    // and when there is no limit at all, so the limit itself has to be checked.
+    int timelimit;
+    if (!GetMapTimeLimit(timelimit) || timelimit <= 0) {
+        return Plugin_Continue;
+    }
+
+    float voteWindow = g_cvVoteTime.FloatValue * 60.0;
+    if (tl > 0 && float(tl) <= voteWindow && !g_bVoteActive && !g_bAutoVoteFired) {
+        if (StrEqual(g_sNextMap, "")) {
+            if (StartPhase1(2)) {
+                g_bAutoVoteFired = true;
+            } else {
+                DebugLog("Auto-vote trigger skipped because phase 1 could not start.");
             }
-        } else if (tl <= 0 && !StrEqual(g_sNextMap, "")) {
-            ScheduleMapJump(1.0);
         }
+    } else if (tl <= 0 && !StrEqual(g_sNextMap, "")) {
+        ScheduleMapJump(1.0);
     }
     return Plugin_Continue;
 }
@@ -1467,6 +1675,11 @@ int GetRealCount() {
 // MENU DE ADMIN: SETEAR SIGUIENTE MAPA
 // ==========================================
 void ShowAdminSetNextGroupMenu(int client) {
+    if (g_alGroupNames.Length == 0) {
+        CPrintToChat(client, "%s%T", CHAT_PREFIX, "No_Groups_Loaded", client);
+        return;
+    }
+
     Menu m = new Menu(H_AdminSetNextGroup);
     char title[128];
     Format(title, sizeof(title), "%T", "Admin_Menu_SetNext", client);
@@ -1568,6 +1781,7 @@ public int H_AdminSetNextTiming(Menu m, MenuAction a, int p1, int p2) {
         SetNextMapSelection(mapEntry);
         if (g_bNextMapIsWorkshop) {
             DebugLog("Admin selected workshop next map '%s' (id=%s, fallback='%s').", g_sNextMap, g_sNextWorkshopId, g_sNextMapTarget);
+            SyncWorkshopNextMap();
         }
         if (!g_bNextMapIsWorkshop && !SetNextMap(g_sNextMapTarget)) {
             LogError("UMI: SetNextMap failed for admin-selected map '%s'.", g_sNextMapTarget);
