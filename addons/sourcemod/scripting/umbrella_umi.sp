@@ -8,7 +8,7 @@
 #define REQUIRE_PLUGIN
 
 #define PLUGIN_NAME "Umbrella Multimod Interface (UMI)"
-#define PLUGIN_VERSION "1.1.1"
+#define PLUGIN_VERSION "1.1.2"
 #define CHAT_PREFIX "{lightblue}[UMI] {default}"
 #define MIN_MAP_CHANGE_DELAY 3.0
 #define SOUND_START_DEFAULT "admin_plugin/actions/startyourvoting.mp3"
@@ -267,9 +267,19 @@ public void AdminMenu_UMI_Items(TopMenu topmenu, TopMenuAction action, TopMenuOb
         topmenu.GetObjName(object_id, name, sizeof(name));
 
         if (StrEqual(name, "umi_force")) {
-            if (g_bVoteActive) {
+            if (g_bVoteActive || IsVoteInProgress()) {
                 CPrintToChat(param, "%s%T", CHAT_PREFIX, "Admin_Error_VoteActive", param);
-            } else if (!StartPhase1(3)) {
+                return;
+            }
+
+            if (g_bChangeOnRoundEnd || !StrEqual(g_sNextMap, "")) {
+                CancelScheduledMapJump();
+                g_bChangeOnRoundEnd = false;
+                ClearNextMapSelection();
+                RestorePreviousNextMap();
+            }
+
+            if (!StartPhase1(3)) {
                 CPrintToChat(param, "%s%T", CHAT_PREFIX, "No_Groups_Loaded", param);
             }
         } else if (StrEqual(name, "umi_setnext")) {
@@ -298,6 +308,9 @@ public void AdminMenu_UMI_Items(TopMenu topmenu, TopMenuAction action, TopMenuOb
             }
         } else if (StrEqual(name, "umi_abort")) {
             if (g_bChangeOnRoundEnd || !StrEqual(g_sNextMap, "")) {
+                if (g_bVoteActive && IsVoteInProgress()) {
+                    CancelVote();
+                }
                 ResetVoteFlowState();
                 CancelScheduledMapJump();
                 ClearNextMapSelection();
@@ -912,9 +925,9 @@ public void VCB_Phase1(Menu menu, int num_votes, int num_clients, const int[][] 
 
         int pick = GetRandomInt(0, tiedCount - 1);
         int winIndex = item_info[pick][VOTEINFO_ITEM_INDEX];
-        char win[64];
-        menu.GetItem(winIndex, win, sizeof(win));
-        AnnounceRandomTieFallback(win);
+        char win[64], winDisplay[128];
+        menu.GetItem(winIndex, win, sizeof(win), _, winDisplay, sizeof(winDisplay));
+        AnnounceRandomTieFallback(winDisplay);
         DebugLog("Phase1 tie fallback picked '%s' (tied=%d, rounds=%d, enabled=%d).", win, tiedCount, g_iPhase1TieBreakRounds, g_cvTieBreakEnable.IntValue);
         ResolvePhase1Winner(win);
         return;
@@ -996,7 +1009,7 @@ void ScheduleMapJump(float delay) {
 
 // --- FASE 1: CATEGORIA ---
 bool StartPhase1(int trigger) {
-    if (g_bVoteActive) {
+    if (g_bVoteActive || IsVoteInProgress()) {
         return false;
     }
 
@@ -1099,6 +1112,13 @@ public Action Timer_Phase2(Handle timer) {
     }
 
     if (!g_bVoteActive || StrEqual(g_sWinningGroup, "")) {
+        return Plugin_Stop;
+    }
+
+    // Another plugin's vote is on screen: wait for it instead of failing.
+    if (IsVoteInProgress()) {
+        DebugLog("Phase2 delayed because another vote is in progress.");
+        g_hPhase2Timer = CreateTimer(1.0, Timer_Phase2);
         return Plugin_Stop;
     }
 
@@ -1647,6 +1667,15 @@ public Action Timer_Jump(Handle t) {
     if (g_sNextMapTarget[0] == '\0') {
         LogError("UMI: No map target set for next map '%s'.", g_sNextMap);
         ClearNextMapSelection();
+        return Plugin_Stop;
+    }
+
+    char resolved[PLATFORM_MAX_PATH];
+    if (FindMap(g_sNextMapTarget, resolved, sizeof(resolved)) == FindMap_NotFound) {
+        LogError("UMI: Map '%s' was not found on the server; map change canceled.", g_sNextMapTarget);
+        g_bChangeOnRoundEnd = false;
+        ClearNextMapSelection();
+        RestorePreviousNextMap();
         return Plugin_Stop;
     }
 

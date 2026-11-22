@@ -1,7 +1,7 @@
 # Umbrella Multimod Interface (UMI)
 
 ![SourceMod](https://img.shields.io/badge/SourceMod-1.12%2B-orange)
-![Version](https://img.shields.io/badge/version-1.1.1-blue)
+![Version](https://img.shields.io/badge/version-1.1.2-blue)
 ![License](https://img.shields.io/badge/license-GPLv3-green)
 
 A two-phase map voting system for SourceMod servers that run several mods or map
